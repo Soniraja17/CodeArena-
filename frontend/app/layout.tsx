@@ -2,6 +2,7 @@ import "./globals.css";
 import type { Metadata } from "next";
 import { orbitron, inter, jetbrains } from "@/lib/fonts";
 import { Providers } from "./providers";
+import { Analytics } from "@vercel/analytics/next";
 
 export const metadata: Metadata = {
   title: "CodeArena · enter the arena",
@@ -18,6 +19,7 @@ export default function RootLayout({
     <html lang="en" className={`${orbitron.variable} ${inter.variable} ${jetbrains.variable}`}>
       <body>
         <Providers>{children}</Providers>
+        <Analytics />
       </body>
     </html>
   );
