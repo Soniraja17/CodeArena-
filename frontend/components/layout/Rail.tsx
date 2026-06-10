@@ -66,9 +66,14 @@ export function Rail() {
       <Link
         href="/profile/settings"
         title="Settings"
-        className="flex h-11 w-11 items-center justify-center rounded-lg border border-transparent text-[var(--color-text-3)] hover:border-[var(--color-border)] hover:text-[var(--color-text-1)]"
+        className={cn(
+          "flex h-11 w-11 items-center justify-center rounded-lg border transition",
+          pathname === "/profile/settings"
+            ? "border-[var(--color-border-hot)] bg-[var(--color-neon-pink)]/10 text-[var(--color-neon-pink)]"
+            : "border-transparent text-[var(--color-text-3)] hover:border-[var(--color-border)] hover:text-[var(--color-text-1)]"
+        )}
       >
-        ⚙
+        <span aria-hidden>⚙</span>
       </Link>
     </nav>
   );
