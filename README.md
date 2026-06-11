@@ -113,16 +113,6 @@ Full setup instructions in [DEPLOYMENT.md](DEPLOYMENT.md). Current state and kno
 
 ---
 
-## Design docs
-
-Living docs that drove the build:
-
-- [docs/superpowers/specs/2026-05-22-codeforces-duel-arcade-design.md](docs/superpowers/specs/2026-05-22-codeforces-duel-arcade-design.md) — full design spec (visual system, mechanics, gamification rules, data model, backend extensions)
-- [docs/superpowers/plans/2026-05-22-codeforces-duel-phase-1.md](docs/superpowers/plans/2026-05-22-codeforces-duel-phase-1.md) — Phase 1 implementation plan
-- [docs/superpowers/plans/2026-05-22-codeforces-duel-phase-2.md](docs/superpowers/plans/2026-05-22-codeforces-duel-phase-2.md) — Phase 2 implementation plan
-
----
-
 ## License
 
 MIT.
