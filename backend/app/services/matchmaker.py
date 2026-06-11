@@ -17,8 +17,8 @@ from app.services.elo import tier_for_elo
 log = logging.getLogger("matchmaker")
 
 TICK_SECONDS = 1.0
-INITIAL_WINDOW = 150
-WIDEN_WINDOWS = [(60, 300), (120, 500)]  # (seconds_in_queue, window)
+INITIAL_WINDOW = 200
+WIDEN_WINDOWS = [(30, 400), (60, 600)]  # (seconds_in_queue, window)
 
 
 def _window_for(entry: MatchmakingQueueEntry) -> int:
@@ -108,9 +108,7 @@ def _start_duel(db: Session, host: MatchmakingQueueEntry, opp: MatchmakingQueueE
             )
         )
 
-    db.delete(host)
-    db.delete(opp)
-    db.commit()
+    db.flush()
     return duel
 
 
@@ -139,6 +137,9 @@ async def _tick() -> None:
             paired.add(entry.id)
             paired.add(opp.id)
 
+            # Broadcast match_found to BOTH users, then commit.
+            # This prevents the race where one user enters the duel
+            # while the other is left stranded in the queue.
             entry_user_id = entry.user_id
             opp_user_id = opp.user_id
 
@@ -165,6 +166,10 @@ async def _tick() -> None:
                         },
                     },
                 )
+
+            db.delete(entry)
+            db.delete(opp)
+            db.commit()
     finally:
         db.close()
 
