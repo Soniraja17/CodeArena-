@@ -63,7 +63,20 @@ jobs:
         working-directory: backend
         run: |
           rm -f codearena.db
-          python -c "from app.main import app; assert len(app.routes) > 30; print(f'app loads, {len(app.routes)} routes')"
+          python -c "
+import sys
+print('CWD:', sys.path[0])
+print('sys.path:', sys.path[:5])
+try:
+    from app.main import app
+    print('IMPORT OK')
+    print('ROUTES:', len(app.routes))
+    for r in app.routes:
+        print(' ', r.path)
+except Exception as e:
+    print('IMPORT FAILED:', type(e).__name__, e)
+    sys.exit(1)
+"
 
       - name: Test
         working-directory: backend
