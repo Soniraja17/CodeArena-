@@ -1,7 +1,7 @@
 "use client";
 import { create } from "zustand";
 import { TypedWS, wsUrl } from "@/lib/ws";
-import type { DuelEvent, EloChange, EmoteGlyph } from "@/types/ws";
+import type { DuelEvent, EloChange, EmoteGlyph, ChatMessage, ActivityEvent } from "@/types/ws";
 import type { Duel } from "@/types/duel";
 import { api } from "@/lib/api";
 
@@ -22,6 +22,8 @@ interface State {
   recentEvents: RecentEvent[];
   floatingEmotes: FloatingEmote[];
   socket: TypedWS<DuelEvent> | null;
+  chatMessages: ChatMessage[];
+  activityEvents: ActivityEvent[];
   // Two timers we manage on the client to make the HUD self-healing:
   refreshTimer: ReturnType<typeof setInterval> | null;
   heartbeatTimer: ReturnType<typeof setInterval> | null;
@@ -48,6 +50,8 @@ export const useDuel = create<State>((set, get) => ({
   recentEvents: [],
   floatingEmotes: [],
   socket: null,
+  chatMessages: [],
+  activityEvents: [],
   refreshTimer: null,
   heartbeatTimer: null,
   complete: null,
@@ -201,6 +205,42 @@ export const useDuel = create<State>((set, get) => ({
           },
         });
       }
+      if (ev.type === "opponent_left") {
+        const isHost = ev.payload.user_id === get().duel?.host?.user_id;
+        const target = isHost ? get().duel?.host : get().duel?.opponent;
+        if (target) {
+          const username = target.username ?? ev.payload.username;
+          set({
+            recentEvents: [
+              ...get().recentEvents,
+              {
+                ts: Date.now(),
+                text: `${username} left the duel - ${ev.payload.auto_forfeit ? "Forfeit" : "Left"}`,            
+              },
+            ].slice(0, 20),
+          });
+        }
+      }
+      if (ev.type === "duel_abandoned") {
+        set({
+          complete: {
+            winnerId: ev.payload.winner_id,
+            eloChanges: {}, // Elo changes will come via duel_complete WS event
+            promotionFor: null,
+            newTier: null,
+            demotionFor: null,
+          },
+        });
+        set({
+          recentEvents: [
+            ...get().recentEvents,
+            {
+              ts: Date.now(),
+              text: `Duel abandoned - ${ev.payload.reason}`,            
+            },
+          ].slice(0, 20),
+        });
+      }
       if (ev.type === "emote") {
         const id = `${ev.payload.user_id}-${ev.payload.sent_at}-${Math.random()
           .toString(36)
@@ -215,6 +255,23 @@ export const useDuel = create<State>((set, get) => ({
               receivedAt: Date.now(),
             },
           ],
+        });
+      }
+      if (ev.type === "chat_message") {
+        set({
+          chatMessages: [ev.payload, ...get().chatMessages].slice(0, 100),
+        });
+        set({
+          recentEvents: [
+            ...get().recentEvents,
+            {
+              ts: new Date(ev.payload.created_at).getTime(),
+              text: ev.payload.message,
+              user_id: ev.payload.user_id,
+              type: "chat",
+              data: { message: ev.payload.message },
+            },
+          ].slice(0, 20),
         });
       }
     });
@@ -281,23 +338,25 @@ export const useDuel = create<State>((set, get) => ({
     if (get().forfeitInFlight) return;
     set({ forfeitInFlight: true });
     try {
-      const { data } = await api.post<{ winner_id: string | null }>(
-        `/duel/${duelId}/forfeit`
-      );
-      // OPTIMISTIC LOCAL UPDATE: backend has accepted the forfeit. The full
-      // duel_complete WS event with elo_changes will arrive shortly, but we
-      // immediately seed `complete` so the UI stops feeling hung. The
-      // VictoryOverlay still needs eloChanges to render, so we render a
-      // lightweight "duel ending…" splash from forfeitInFlight in the meantime.
-      set((s) => ({
-        complete: s.complete ?? {
-          winnerId: data.winner_id ?? null,
-          eloChanges: {}, // WS event will fill these in
-          promotionFor: null,
-          newTier: null,
-          demotionFor: null,
+      const { data } = await api.post<{
+        winner_id: string | null;
+        payload: {
+          winner_id: string | null;
+          promotion_for: string | null;
+          new_tier: string | null;
+          demotion_for: string | null;
+          elo_changes: Record<string, { before: number; after: number; delta: number }>;
+        };
+      }>(`/duel/${duelId}/forfeit`);
+      set({
+        complete: {
+          winnerId: data.payload.winner_id ?? null,
+          eloChanges: data.payload.elo_changes,
+          promotionFor: data.payload.promotion_for,
+          newTier: data.payload.new_tier,
+          demotionFor: data.payload.demotion_for,
         },
-      }));
+      });
     } finally {
       set({ forfeitInFlight: false });
     }

@@ -57,7 +57,11 @@ class CodeforcesService:
                 headers={"User-Agent": "CodeArena/1.0"},
             )
             response.raise_for_status()
-            return response.json()
+            try:
+                return response.json()
+            except ValueError:
+                text = response.content.decode("utf-8-sig")
+                return json.loads(text)
         except Exception as e:
             logger.error(f"CF API request failed: {e}")
             return None

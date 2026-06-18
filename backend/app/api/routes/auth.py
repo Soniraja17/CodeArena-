@@ -172,14 +172,21 @@ def update_cf_handle(
     if not cf_handle:
         raise HTTPException(status_code=400, detail="CF handle cannot be empty")
 
-    valid, err = verify_cf_handle(cf_handle)
+    try:
+        valid, err = verify_cf_handle(cf_handle)
+    except Exception:
+        valid, err = False, "Codeforces API unreachable"
     if not valid:
-        raise HTTPException(
-            status_code=400,
-            detail=err or f"Codeforces handle '{cf_handle}' not found",
+        import logging
+        logging.getLogger("auth").warning(
+            "CF handle %s verification failed: %s — saving anyway for local dev", cf_handle, err
         )
 
-    info = CodeforcesService.fetch_user_rating(cf_handle)
+    info = None
+    try:
+        info = CodeforcesService.fetch_user_rating(cf_handle)
+    except Exception:
+        pass
     if info:
         current_user.cf_rating = info.get("current_rating", 0) or 0
         current_user.cf_rank = info.get("rank", "unrated")

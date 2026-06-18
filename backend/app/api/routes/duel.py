@@ -1,14 +1,16 @@
 import json
+import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
 from app import crud
 from app.db import get_db
-from app.models import Duel, DuelParticipant, DuelStep, EloHistory, User
+from app.models import ChatMessage, Duel, DuelParticipant, DuelStep, EloHistory, ReplayEvent, User
 from app.schemas import (
     DuelCreate,
     DuelCreateResponse,
@@ -26,6 +28,8 @@ from app.services.duel_completion import complete_duel
 from app.services.duel_roles import host_and_opponent, is_duel_host
 from app.services.elo import tier_for_elo
 from app.api.routes.auth import _get_current_user
+from app.services.ws_hub import hub
+from app.services.metrics import metrics_response, MetricsMiddleware
 
 router = APIRouter(prefix="/duel", tags=["duel"])
 
@@ -548,8 +552,8 @@ async def forfeit_duel(
 
     other = next((p for p in parts if p.user_id != current_user.id), None)
     winner_id = other.user_id if other else None
-    await complete_duel(db, duel, winner_user_id=winner_id)
-    return {"ok": True, "winner_id": winner_id}
+    payload = await complete_duel(db, duel, winner_user_id=winner_id)
+    return {"ok": True, "winner_id": winner_id, "payload": payload}
 
 
 @router.get("/{duel_id}/problem")
@@ -583,6 +587,81 @@ def get_duel_problem(duel_id: str, user_id: str, db: Session = Depends(get_db)):
         "memory_limit": None,
         "status": duel.status,
     }
+
+
+@router.get("/{duel_id}/chat")
+def get_chat_messages(
+    duel_id: str,
+    db: Session = Depends(get_db),
+):
+    messages = (
+        db.query(ChatMessage)
+        .filter(ChatMessage.duel_id == duel_id)
+        .order_by(ChatMessage.created_at.asc())
+        .all()
+    )
+    return {"messages": jsonable_encoder(messages)}
+
+
+@router.post("/{duel_id}/chat")
+def send_chat_message(
+    duel_id: str,
+    body: dict = Body(...),
+    db: Session = Depends(get_db),
+):
+    user_id = body.get("user_id")
+    message = body.get("message")
+    if not user_id or not message or not message.strip():
+        raise HTTPException(status_code=400, detail="user_id and message are required")
+
+    chat_msg = ChatMessage(
+        id=str(uuid.uuid4()),
+        duel_id=duel_id,
+        user_id=user_id,
+        message=message.strip(),
+        created_at=datetime.utcnow(),
+    )
+    db.add(chat_msg)
+    db.commit()
+    db.refresh(chat_msg)
+    
+    return {"message": jsonable_encoder(chat_msg)}
+
+
+@router.get("/activity")
+def get_activity_events(
+    db: Session = Depends(get_db),
+):
+    # Get recent replay events for the last 24 hours
+    since = datetime.utcnow() - timedelta(hours=24)
+    events = (
+        db.query(ReplayEvent)
+        .filter(ReplayEvent.created_at >= since)
+        .order_by(ReplayEvent.created_at.desc())
+        .all()
+    )
+    
+    activity_events = []
+    for event in events:
+        try:
+            payload = json.loads(event.payload_json or "{}")
+            username = "unknown"
+            if event.user_id:
+                user = db.query(User).filter(User.id == event.user_id).first()
+                if user:
+                    username = user.username
+            
+            activity_events.append({
+                "type": event.event_type,
+                "user_id": event.user_id,
+                "username": username,
+                "timestamp": event.created_at.isoformat() + "Z",
+                "data": payload,
+            })
+        except Exception:
+            continue
+    
+    return {"events": activity_events}
 
 
 # ================= PURE WILDCARD — ABSOLUTE LAST =================

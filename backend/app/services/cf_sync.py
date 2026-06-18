@@ -63,12 +63,13 @@ def verify_cf_handle(handle: str) -> tuple[bool, Optional[str]]:
     if cached and cached[2] > time.time():
         return cached[0], cached[1] or None
 
-    info = CodeforcesService.fetch_user_rating(handle)
+    try:
+        info = CodeforcesService.fetch_user_rating(handle)
+    except Exception:
+        info = None
     if info is None:
-        msg = f"Codeforces handle '{handle}' not found"
-        _handle_valid_cache[handle.lower()] = (False, msg, time.time() + 300)
-        return False, msg
-
+        _handle_valid_cache[handle.lower()] = (True, "unverified", time.time() + 300)
+        return True, "unverified (CF API error)"
     _handle_valid_cache[handle.lower()] = (True, "", time.time() + 600)
     return True, None
 
@@ -120,7 +121,12 @@ async def fetch_user_status(handle: str) -> tuple[Optional[list[dict]], Optional
         async with httpx.AsyncClient(timeout=12.0) as client:
             r = await client.get(url)
         _last_call[handle] = time.time()
-        data = r.json()
+        try:
+            data = r.json()
+        except ValueError:
+            import json as _json
+            text = r.content.decode("utf-8-sig")
+            data = _json.loads(text)
         if data.get("status") != "OK":
             comment = data.get("comment") or "Codeforces API error"
             return None, comment

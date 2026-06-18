@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Button } from "@/components/primitives/Button";
 import { NeonText } from "@/components/primitives/NeonText";
 
-export function HeroBattleCard({ onBattle }: { onBattle: () => void }) {
+export function HeroBattleCard() {
   return (
     <div
       className="relative overflow-hidden rounded-2xl border border-[var(--color-border-hot)] bg-[var(--color-surface)] p-6 sm:p-10"
@@ -27,9 +27,6 @@ export function HeroBattleCard({ onBattle }: { onBattle: () => void }) {
         retreats.
       </p>
       <div className="mt-6 sm:mt-7 flex flex-wrap items-center gap-2.5 sm:gap-3.5">
-        <Button size="lg" onClick={onBattle}>
-          ⚔ Enter arena
-        </Button>
         <Link href="/play/friend">
           <Button variant="secondary">Friend duel</Button>
         </Link>

@@ -1,5 +1,5 @@
 "use client";
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useState, useRef } from "react";
 import { useDuel } from "@/stores/duel";
 import { useAuth } from "@/stores/auth";
 import { OpponentPanel } from "@/components/arena/OpponentPanel";
@@ -11,6 +11,10 @@ import { DemotionToast } from "@/components/arena/DemotionToast";
 import { FloatingEmotes } from "@/components/arena/FloatingEmotes";
 import { ActivityTicker } from "@/components/arena/ActivityTicker";
 import { DuelHeader } from "@/components/arena/DuelHeader";
+import { ChatPanel } from "@/components/arena/ChatPanel";
+import { LiveActivityFeed } from "@/components/arena/LiveActivityFeed";
+import { MobileChatDialog } from "@/components/arena/MobileChatDialog";
+import { MessageSquare } from "lucide-react";
 
 export default function DuelPage({
   params,
@@ -19,11 +23,13 @@ export default function DuelPage({
 }) {
   const { id } = use(params);
   const me = useAuth((s) => s.user);
-  const { duel, load, sync, connect, disconnect, complete, recentEvents } =
+  const { duel, load, sync, connect, disconnect, reset, complete, recentEvents } =
     useDuel();
 
   // ALL hooks must run unconditionally on every render.
   const [ceremonyDone, setCeremonyDone] = useState(false);
+  const [isMobileChatOpen, setIsMobileChatOpen] = useState(false);
+  const chatButtonRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     (async () => {
@@ -37,8 +43,19 @@ export default function DuelPage({
     return () => {
       clearInterval(tick);
       disconnect();
+      reset();
     };
   }, [id, load, sync, connect, disconnect]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: globalThis.MouseEvent) => {
+      if (chatButtonRef.current && !chatButtonRef.current.contains(event.target as Node)) {
+        setIsMobileChatOpen(false);
+      }
+    };
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, []);
 
   // Conditional rendering — but never conditional hooks.
   if (!duel) {
@@ -178,6 +195,22 @@ export default function DuelPage({
         )}
 
         <ActivityTicker events={recentEvents} />
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="lg:col-span-2">
+            {duel.status === "active" && (
+              <ChatPanel
+                duelId={id}
+                opponentUsername={opp?.username ?? "Opponent"}
+                isHost={!!(me && duel.host?.user_id === me.id)}
+                className="h-96 lg:h-full"
+              />
+            )}
+          </div>
+          <div className="hidden lg:block">
+            <LiveActivityFeed className="h-full" userId={me?.id} />
+          </div>
+        </div>
       </div>
 
       <FloatingEmotes />
@@ -199,6 +232,26 @@ export default function DuelPage({
           myDelta={myEloChange.delta}
           duelId={id}
         />
+      )}
+
+      <MobileChatDialog
+        duelId={id}
+        opponentUsername={opp?.username ?? "Opponent"}
+        duel={duel}
+        isOpen={isMobileChatOpen}
+        onClose={() => setIsMobileChatOpen(false)}
+      />
+
+      {duel.status === "active" && (
+        <div ref={chatButtonRef} className="fixed bottom-4 right-4 lg:hidden z-40">
+          <button
+            onClick={() => setIsMobileChatOpen(true)}
+            className="flex items-center gap-2 px-4 py-3 bg-[var(--color-primary)] text-[var(--color-bg-primary)] rounded-lg shadow-lg hover:opacity-90 transition-all"
+          >
+            <MessageSquare className="w-5 h-5" />
+            <span className="font-mono text-sm font-semibold">Chat</span>
+          </button>
+        </div>
       )}
     </>
   );

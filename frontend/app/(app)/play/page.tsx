@@ -1,6 +1,5 @@
 "use client";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useAuth } from "@/stores/auth";
 import { HeroBattleCard } from "@/components/dashboard/HeroBattleCard";
 import { ProfileMicroCard } from "@/components/dashboard/ProfileMicroCard";
@@ -10,16 +9,7 @@ import { QuestsPanel } from "@/components/dashboard/QuestsPanel";
 import { Card } from "@/components/primitives/Card";
 
 export default function PlayPage() {
-  const router = useRouter();
   const user = useAuth((s) => s.user);
-
-  function onBattle() {
-    if (!user?.cf_handle) {
-      router.push("/profile/settings?from=play");
-      return;
-    }
-    router.push("/play/queue");
-  }
 
   return (
     <div className="space-y-8">
@@ -45,7 +35,7 @@ export default function PlayPage() {
       )}
 
       <section className="grid grid-cols-1 md:grid-cols-[1fr_380px] gap-6">
-        <HeroBattleCard onBattle={onBattle} />
+        <HeroBattleCard />
         <ProfileMicroCard />
       </section>
 

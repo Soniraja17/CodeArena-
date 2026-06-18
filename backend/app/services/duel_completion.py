@@ -212,3 +212,4 @@ async def complete_duel(
     db.commit()
 
     await hub.broadcast("duel", duel.id, {"type": "duel_complete", "payload": payload})
+    return payload

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import time
 from datetime import datetime
 
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -10,18 +11,21 @@ from sqlalchemy.orm import Session
 
 from . import crud, schemas
 from .db import Base, engine, get_db
-from .models import Duel, DuelParticipant, DuelStep, EloHistory, User
+from .models import ChatMessage, Duel, DuelParticipant, DuelStep, EloHistory, User
 from .schemas import CFProblemsResponse
 from .services.codeforces import CodeforcesService
+from .services.cf_sync import process_duel_cf
 from .services.elo import tier_for_elo
 from .services.ws_hub import hub
 from .services.matchmaker import run_matchmaker_loop
+
 from .services.cf_poller import run_cf_poller_loop
 from .services.metrics import metrics_response, MetricsMiddleware
 from .api.routes.auth import router as auth_router
 from .api.routes.practice import router as practice_router
 from .api.routes.duel import router as duel_router
 from .api.routes.matchmaking import router as matchmaking_router
+
 from .api.routes.cf import router as cf_router
 from .api.routes.leaderboard import router as leaderboard_router
 from .api.routes.quests import router as quests_router
@@ -254,9 +258,14 @@ def public_profile_by_username(username: str, db: Session = Depends(get_db)):
 async def duel_ws(websocket: WebSocket, duel_id: str):
     from .services.emote import check_and_record, valid_glyph
     from .api.routes.duel import _serialize_duel_state
+    from .models import ChatMessage
 
     await websocket.accept()
     await hub.subscribe("duel", duel_id, websocket)
+    # Track WebSocket usage for abandonment detection
+    ws_key = f"duel:{duel_id}:{websocket.client.host}"
+    _websocket_last_seen[ws_key] = time.time()
+    
     db = next(get_db())
     try:
         state = _serialize_duel_state(db, duel_id)
@@ -265,9 +274,13 @@ async def duel_ws(websocket: WebSocket, duel_id: str):
             msg = await websocket.receive_text()
             if msg == "ping":
                 await websocket.send_json({"type": "pong"})
+                # Update last seen time
+                _websocket_last_seen[ws_key] = time.time()
                 continue
             try:
                 payload = json.loads(msg)
+                # Update last seen time on any message
+                _websocket_last_seen[ws_key] = time.time()
             except Exception:
                 continue
             if payload.get("type") == "emote":
@@ -283,12 +296,37 @@ async def duel_ws(websocket: WebSocket, duel_id: str):
                     continue
                 await hub.broadcast("duel", duel_id, {
                     "type": "emote",
-                    "payload": {"user_id": user_id, "glyph": glyph, "sent_at": __import__("time").time()},
+                    "payload": {"user_id": user_id, "glyph": glyph, "sent_at": time.time()},
+                })
+            elif payload.get("type") == "chat":
+                user_id = payload.get("user_id")
+                message = payload.get("message")
+                if not user_id or not message or not message.strip():
+                    continue
+                chat_msg = ChatMessage(
+                    id=str(uuid.uuid4()),
+                    duel_id=duel_id,
+                    user_id=user_id,
+                    message=message.strip(),
+                    created_at=datetime.utcnow(),
+                )
+                db.add(chat_msg)
+                db.commit()
+                await hub.broadcast("duel", duel_id, {
+                    "type": "chat_message",
+                    "payload": {
+                        "id": chat_msg.id,
+                        "user_id": chat_msg.user_id,
+                        "message": chat_msg.message,
+                        "created_at": chat_msg.created_at.isoformat() + "Z",
+                    },
                 })
     except WebSocketDisconnect:
         pass
     finally:
         await hub.unsubscribe("duel", duel_id, websocket)
+        # Track disconnection time
+        _websocket_last_seen[ws_key] = time.time()
         db.close()
 
 
@@ -296,36 +334,117 @@ async def duel_ws(websocket: WebSocket, duel_id: str):
 async def queue_ws(websocket: WebSocket, user_id: str):
     await websocket.accept()
     await hub.subscribe("queue", user_id, websocket)
+    # Track WebSocket usage for abandonment detection
+    ws_key = f"queue:{user_id}:{websocket.client.host}"
+    _websocket_last_seen[ws_key] = time.time()
+    
     try:
         await websocket.send_json({"type": "connected", "payload": {"user_id": user_id}})
         while True:
             msg = await websocket.receive_text()
             if msg == "ping":
                 await websocket.send_json({"type": "pong"})
+                # Update last seen time
+                _websocket_last_seen[ws_key] = time.time()
     except WebSocketDisconnect:
         pass
     finally:
         await hub.unsubscribe("queue", user_id, websocket)
+        # Track disconnection time
+        _websocket_last_seen[ws_key] = time.time()
 
 
 @app.websocket("/ws/user/{user_id}")
 async def user_ws(websocket: WebSocket, user_id: str):
     await websocket.accept()
     await hub.subscribe("user", user_id, websocket)
+    # Track WebSocket usage for abandonment detection
+    ws_key = f"user:{user_id}:{websocket.client.host}"
+    _websocket_last_seen[ws_key] = time.time()
+    
     try:
         await websocket.send_json({"type": "connected", "payload": {"user_id": user_id}})
         while True:
             msg = await websocket.receive_text()
             if msg == "ping":
                 await websocket.send_json({"type": "pong"})
+                # Update last seen time
+                _websocket_last_seen[ws_key] = time.time()
     except WebSocketDisconnect:
         pass
     finally:
         await hub.unsubscribe("user", user_id, websocket)
+        # Track disconnection time
+        _websocket_last_seen[ws_key] = time.time()
 
 
 # ================= BACKGROUND WORKERS =================
 _background_tasks: list[asyncio.Task] = []
+_websocket_last_seen: dict[str, float] = {}
+CHECK_INTERVAL = 30  # seconds
+ABANDON_THRESHOLD = 90  # seconds - if no message for this long, consider abandoned
+
+
+async def _check_abandoned_duels() -> None:
+    """Periodically check for inactive duels and auto-forfeit for disconnected players."""
+    while True:
+        await asyncio.sleep(CHECK_INTERVAL)
+        db = next(get_db())
+        try:
+            current_time = time.time()
+            for ws_key, last_seen in list(_websocket_last_seen.items()):
+                if current_time - last_seen <= ABANDON_THRESHOLD:
+                    continue
+                if not ws_key.startswith("duel:"):
+                    continue
+                key_parts = ws_key.split(":", 2)
+                if len(key_parts) < 2:
+                    continue
+                duel_id = key_parts[1]
+                remote_user_id = key_parts[2] if len(key_parts) > 2 else None
+
+                duel = db.query(Duel).filter(Duel.id == duel_id).first()
+                if not duel or duel.status != "active":
+                    continue
+
+                participant_rows = db.query(DuelParticipant).filter(DuelParticipant.duel_id == duel_id).all()
+                active_ids = [p.user_id for p in participant_rows]
+                if not active_ids:
+                    continue
+
+                others = [p.user_id for p in participant_rows if p.user_id != remote_user_id]
+                if others:
+                    winner_id = others[0]
+                    await complete_duel(db, duel, winner_user_id=winner_id)
+                    await hub.broadcast("duel", duel_id, {
+                        "type": "duel_abandoned",
+                        "payload": {
+                            "winner_id": winner_id,
+                            "reason": "opponent_disconnected",
+                        },
+                    })
+                else:
+                    duel.status = "complete"
+                    duel.finished_at = datetime.utcnow()
+                    db.commit()
+
+                _websocket_last_seen.pop(ws_key, None)
+        except Exception as exc:
+            print(f"Error checking abandoned duels: {exc}")
+        finally:
+            db.close()
+
+
+async def _track_websocket_usage() -> None:
+    """Track WebSocket activity for abandonment detection."""
+    while True:
+        current_time = time.time()
+        # Remove entries older than 5 minutes
+        old_keys = [k for k, v in _websocket_last_seen.items() if current_time - v > 300]
+        for k in old_keys:
+            _websocket_last_seen.pop(k, None)
+        
+        await asyncio.sleep(CHECK_INTERVAL)
 
 
 @app.on_event("startup")
@@ -342,6 +461,8 @@ async def _start_workers() -> None:
 
     _background_tasks.append(asyncio.create_task(run_matchmaker_loop()))
     _background_tasks.append(asyncio.create_task(run_cf_poller_loop()))
+    _background_tasks.append(asyncio.create_task(_track_websocket_usage()))
+    _background_tasks.append(asyncio.create_task(_check_abandoned_duels()))
 
 
 @app.on_event("shutdown")

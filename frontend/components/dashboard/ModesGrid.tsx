@@ -3,13 +3,6 @@ import { cn } from "@/lib/cn";
 
 const MODES = [
   {
-    href: "/play/queue",
-    glyph: "QM",
-    name: "Quick match",
-    desc: "Matched by ELO ±150. ~30s queue, ~25 min duel.",
-    tone: "pink" as const,
-  },
-  {
     href: "/play/friend",
     glyph: "FD",
     name: "Friend duel",
@@ -33,7 +26,6 @@ const MODES = [
 ];
 
 const TONE = {
-  pink: "bg-[var(--color-neon-pink)]/15 text-[var(--color-neon-pink)]",
   cyan: "bg-[var(--color-neon-cyan)]/15 text-[var(--color-neon-cyan)]",
   violet: "bg-[var(--color-neon-violet)]/15 text-[var(--color-neon-violet)]",
   gold: "bg-[var(--color-neon-gold)]/15 text-[var(--color-neon-gold)]",
