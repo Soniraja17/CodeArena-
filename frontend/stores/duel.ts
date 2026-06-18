@@ -258,9 +258,12 @@ export const useDuel = create<State>((set, get) => ({
         });
       }
       if (ev.type === "chat_message") {
-        set({
-          chatMessages: [ev.payload, ...get().chatMessages].slice(0, 100),
-        });
+        const existing = get().chatMessages;
+        if (!existing.some((m) => m.id === ev.payload.id)) {
+          set({
+            chatMessages: [...existing, ev.payload].slice(-100),
+          });
+        }
         set({
           recentEvents: [
             ...get().recentEvents,
@@ -276,6 +279,15 @@ export const useDuel = create<State>((set, get) => ({
       }
     });
     sock.connect();
+
+    // One-time fetch of persisted chat messages.
+    (async () => {
+      try {
+        const res = await api.get<{ messages: ChatMessage[] }>(`/duel/${duelId}/chat`);
+        set({ chatMessages: res.data.messages ?? [] });
+      } catch {}
+    })();
+
     set({ socket: sock });
 
     // ───── Heartbeat ─────

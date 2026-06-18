@@ -1,9 +1,9 @@
 "use client";
-import { useState, useEffect, useRef, type KeyboardEvent } from "react";
-import { Send, MessageSquare, Activity } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { Send, MessageSquare } from "lucide-react";
 import { useAuth } from "@/stores/auth";
+import { useDuel } from "@/stores/duel";
 import { api } from "@/lib/api";
-import type { ChatMessage, ActivityEvent } from "@/types/ws";
 import { cn } from "@/lib/cn";
 
 interface ChatPanelProps {
@@ -13,63 +13,38 @@ interface ChatPanelProps {
   className?: string;
 }
 
-export function ChatPanel({ duelId, opponentUsername, isHost, className }: ChatPanelProps) {
+export function ChatPanel({ duelId, opponentUsername, className }: ChatPanelProps) {
   const me = useAuth((s) => s.user);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const storeMessages = useDuel((s) => s.chatMessages);
   const [newMessage, setNewMessage] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
+  const [sending, setSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const fetchMessages = async () => {
-    if (!me?.id) return;
-    try {
-      const response = await api.get(`/duel/${duelId}/chat`);
-      if (response.status === 200) {
-        setMessages(response.data.messages);
-      }
-    } catch (error) {
-      console.error("Failed to fetch messages:", error);
-    }
-  };
-
   const sendMessage = async () => {
-    if (!newMessage.trim() || !me?.id || isLoading) return;
-    
-    setIsLoading(true);
+    if (!newMessage.trim() || !me?.id || sending) return;
+
+    setSending(true);
     try {
       const response = await api.post(`/duel/${duelId}/chat`, {
         user_id: me.id,
         message: newMessage.trim(),
       });
-      
-      if (response.status === 200) {
-        setMessages(prev => [...prev, response.data.message]);
-        setNewMessage("");
+      setNewMessage("");
+      if (response.data?.message) {
+        useDuel.setState((s) => ({
+          chatMessages: [...s.chatMessages, response.data.message],
+        }));
       }
     } catch (error) {
       console.error("Failed to send message:", error);
     } finally {
-      setIsLoading(false);
+      setSending(false);
     }
   };
-
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
-  };
-
-  useEffect(() => {
-    fetchMessages();
-    // Poll for new messages every 3 seconds
-    const interval = setInterval(fetchMessages, 3000);
-    return () => clearInterval(interval);
-  }, [duelId, me?.id]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [storeMessages]);
 
   return (
     <div className={cn(
@@ -84,18 +59,18 @@ export function ChatPanel({ duelId, opponentUsername, isHost, className }: ChatP
       </div>
 
       <div className="flex-1 overflow-y-auto p-3 space-y-3 min-h-0">
-        {messages.length === 0 ? (
+        {storeMessages.length === 0 ? (
           <div className="text-center text-[var(--color-text-tertiary)] text-sm py-8">
             No messages yet. Start the conversation!
           </div>
         ) : (
-          messages.map((msg) => {
+          [...storeMessages].reverse().map((msg) => {
             const isMe = msg.user_id === me?.id;
             const time = new Date(msg.created_at).toLocaleTimeString([], {
               hour: "2-digit",
               minute: "2-digit",
             });
-            
+
             return (
               <div
                 key={msg.id}
@@ -143,20 +118,24 @@ export function ChatPanel({ duelId, opponentUsername, isHost, className }: ChatP
           <textarea
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
-            onKeyDown={handleKeyPress}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+              }
+            }}
             placeholder="Type a message..."
             className="flex-1 resize-none px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] font-mono text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent"
             rows={1}
-            disabled={isLoading}
           />
           <button
             type="submit"
-            disabled={!newMessage.trim() || isLoading}
+            disabled={!newMessage.trim() || sending}
             className={cn(
               "px-4 py-2 rounded-lg font-mono text-sm font-semibold transition-colors",
-              newMessage.trim() && !isLoading
+              newMessage.trim() && !sending
                 ? "bg-[var(--color-primary)] text-[var(--color-bg-primary)] hover:opacity-90"
-                : "bg-[var(--color-bg-tertiary)] text-[var(--color-text-tertiary)] cursor-not-allowed"
+                : "bg-[var(--color-bg-tertiary)] text-[var(--color-text-tertiary)]"
             )}
           >
             <Send className="w-4 h-4" />
